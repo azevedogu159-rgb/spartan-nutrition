@@ -1,0 +1,1 @@
+ALTER TABLE public.purchases ADD COLUMN supplier_fee_pct NUMERIC NOT NULL DEFAULT 0;
