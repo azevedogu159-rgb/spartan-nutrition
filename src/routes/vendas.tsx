@@ -8,12 +8,13 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { brl } from "@/lib/format";
 import { toast } from "sonner";
-import { Trash2 } from "lucide-react";
+import { Camera, Trash2 } from "lucide-react";
 import { ProductImage } from "@/components/ProductImage";
+import { BarcodeScannerDialog } from "@/components/BarcodeScannerDialog";
 
 export const Route = createFileRoute("/vendas")({ component: VendasPage });
 
-type Product = { id: string; name: string; stock_qty: number; avg_cost_brl: number; image_url: string | null };
+type Product = { id: string; name: string; barcode: string | null; stock_qty: number; avg_cost_brl: number; suggested_price_brl: number; image_url: string | null };
 type Customer = { id: string; name: string };
 type Sale = {
   id: string; product_id: string; perfume_name: string; quantity: number; unit_price_brl: number;
@@ -23,6 +24,7 @@ type Sale = {
 };
 
 function todayISO() { return new Date().toISOString().slice(0, 10); }
+function normalizeBarcode(value: string) { return value.replace(/\D/g, ""); }
 function addMonths(iso: string, m: number) {
   const d = new Date(iso); d.setMonth(d.getMonth() + m);
   return d.toISOString().slice(0, 10);
@@ -32,6 +34,8 @@ function VendasPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [productId, setProductId] = useState("");
+  const [barcode, setBarcode] = useState("");
+  const [scannerOpen, setScannerOpen] = useState(false);
   const [customerId, setCustomerId] = useState<string>("none");
   const [qty, setQty] = useState("");
   const [price, setPrice] = useState("");
@@ -57,7 +61,7 @@ function VendasPage() {
 
   const load = async () => {
     const [p, s, c, all] = await Promise.all([
-      supabase.from("products").select("id, name, stock_qty, avg_cost_brl, image_url").gt("stock_qty", 0).order("name"),
+      supabase.from("products").select("id, name, barcode, stock_qty, avg_cost_brl, suggested_price_brl, image_url").gt("stock_qty", 0).order("name"),
       supabase.from("sales").select("*").order("sale_date", { ascending: false }).limit(50),
       supabase.from("customers").select("id, name").order("name"),
       supabase.from("products").select("id, image_url"),
@@ -70,6 +74,20 @@ function VendasPage() {
     setProductsMap(m);
   };
   useEffect(() => { load(); }, []);
+
+  const selectByBarcode = (raw: string) => {
+    const code = normalizeBarcode(raw);
+    setBarcode(code);
+    if (!code) return;
+    const found = products.find((p) => normalizeBarcode(p.barcode ?? "") === code);
+    if (!found) {
+      toast.error("Produto nao encontrado para este codigo.");
+      return;
+    }
+    setProductId(found.id);
+    if (Number(found.suggested_price_brl) > 0) setPrice(String(found.suggested_price_brl));
+    toast.success(`${found.name} selecionado.`);
+  };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -128,7 +146,7 @@ function VendasPage() {
     savingRef.current = false;
     setSaving(false);
     toast.success(`Venda registrada — lucro ${brl(profit)}`);
-    setQty(""); setPrice(""); setProductId(""); setCustomerId("none");
+    setQty(""); setPrice(""); setProductId(""); setBarcode(""); setCustomerId("none");
     setPayment("a_vista"); setParcelas("2");
     load();
   };
@@ -157,6 +175,26 @@ function VendasPage() {
         <CardHeader><CardTitle>Registrar venda</CardTitle></CardHeader>
         <CardContent>
           <form onSubmit={submit} className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-1.5 md:col-span-2">
+              <Label className="text-xs">Venda por codigo de barras</Label>
+              <div className="flex gap-2">
+                <Input
+                  inputMode="numeric"
+                  value={barcode}
+                  onChange={(e) => setBarcode(normalizeBarcode(e.target.value))}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      selectByBarcode(barcode);
+                    }
+                  }}
+                  placeholder="Escaneie com a camera ou digite e pressione Enter"
+                />
+                <Button type="button" variant="outline" size="icon" onClick={() => setScannerOpen(true)}>
+                  <Camera className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
             <div className="space-y-1.5 md:col-span-2">
               <Label className="text-xs">Produto *</Label>
               <div className="flex items-center gap-3">
@@ -245,6 +283,11 @@ function VendasPage() {
               {saving ? "Salvando..." : "Confirmar venda"}
             </Button>
           </form>
+          <BarcodeScannerDialog
+            open={scannerOpen}
+            onOpenChange={setScannerOpen}
+            onScan={selectByBarcode}
+          />
         </CardContent>
       </Card>
 

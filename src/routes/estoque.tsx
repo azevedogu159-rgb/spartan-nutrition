@@ -25,6 +25,7 @@ type Product = {
   id: string;
   name: string;
   brand: string | null;
+  barcode: string | null;
   stock_qty: number;
   avg_cost_brl: number;
   suggested_price_brl: number;
@@ -60,6 +61,7 @@ function EstoquePage() {
       items.filter(
         (p) =>
           p.name.toLowerCase().includes(q.toLowerCase()) ||
+          (p.barcode ?? "").toLowerCase().includes(q.toLowerCase()) ||
           (p.brand ?? "").toLowerCase().includes(q.toLowerCase()),
       ),
     [items, q],
@@ -326,7 +328,10 @@ function ProductRow({
               {status.label}
             </Badge>
           </div>
-          <div className="text-xs text-muted-foreground">{p.brand || "-"}</div>
+          <div className="text-xs text-muted-foreground">
+            {p.brand || "-"}
+            {p.barcode ? ` · ${p.barcode}` : ""}
+          </div>
         </div>
       </div>
       <div className="flex flex-wrap items-end gap-2 sm:justify-end">

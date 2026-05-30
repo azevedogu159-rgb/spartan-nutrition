@@ -9,23 +9,26 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { brl } from "@/lib/format";
 import { toast } from "sonner";
-import { Trash2, Plus, History } from "lucide-react";
+import { Camera, Trash2, Plus, History } from "lucide-react";
+import { BarcodeScannerDialog } from "@/components/BarcodeScannerDialog";
 
 export const Route = createFileRoute("/compras")({ component: ComprasPage });
 
 type Item = {
   name: string;
   brand: string;
+  barcode: string;
   qty: string;
   usd: string;
   suggested: string;
 };
 
 function emptyItem(): Item {
-  return { name: "", brand: "", qty: "", usd: "", suggested: "" };
+  return { name: "", brand: "", barcode: "", qty: "", usd: "", suggested: "" };
 }
 
 function todayISO() { return new Date().toISOString().slice(0, 10); }
+function normalizeBarcode(value: string) { return value.replace(/\D/g, ""); }
 
 function ComprasPage() {
   const [supplier, setSupplier] = useState("");
@@ -37,6 +40,7 @@ function ComprasPage() {
   const [date, setDate] = useState(todayISO());
   const [items, setItems] = useState<Item[]>([emptyItem()]);
   const [saving, setSaving] = useState(false);
+  const [scannerItem, setScannerItem] = useState<number | null>(null);
 
   const feeMul = 1 + (Number(fee) || 0) / 100;
   const r = Number(rate) || 0;
@@ -83,15 +87,22 @@ function ComprasPage() {
 
       for (const it of valid) {
         const cleanName = it.name.trim();
-        const { data: existing } = await supabase.from("products").select("id").eq("name", cleanName).maybeSingle();
+        const barcode = normalizeBarcode(it.barcode);
+        const productQuery = supabase.from("products").select("id");
+        const { data: existing } = barcode
+          ? await productQuery.eq("barcode", barcode).maybeSingle()
+          : await productQuery.eq("name", cleanName).maybeSingle();
         let productId = existing?.id;
         if (!productId) {
           const { data: created, error: cErr } = await supabase
-            .from("products").insert({ name: cleanName, brand: it.brand.trim() || null }).select("id").single();
+            .from("products").insert({ name: cleanName, brand: it.brand.trim() || null, barcode: barcode || null }).select("id").single();
           if (cErr) throw cErr;
           productId = created.id;
-        } else if (it.brand.trim()) {
-          await supabase.from("products").update({ brand: it.brand.trim() }).eq("id", productId);
+        } else if (it.brand.trim() || barcode) {
+          await supabase
+            .from("products")
+            .update({ brand: it.brand.trim() || null, barcode: barcode || null })
+            .eq("id", productId);
         }
         const q = Number(it.qty), u = Number(it.usd);
         const unitBrl = u * r * feeMul;
@@ -200,6 +211,19 @@ function ComprasPage() {
                       <Field label="Marca / linha">
                         <Input value={it.brand} onChange={(e) => updateItem(i, { brand: e.target.value })} placeholder="Ex.: Integralmédica, Dark Lab, Soldiers" />
                       </Field>
+                      <Field label="Codigo de barras">
+                        <div className="flex gap-2">
+                          <Input
+                            inputMode="numeric"
+                            value={it.barcode}
+                            onChange={(e) => updateItem(i, { barcode: normalizeBarcode(e.target.value) })}
+                            placeholder="Escaneie ou digite"
+                          />
+                          <Button type="button" variant="outline" size="icon" onClick={() => setScannerItem(i)}>
+                            <Camera className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </Field>
                       <Field label="Quantidade *">
                         <Input type="number" min="1" value={it.qty} onChange={(e) => updateItem(i, { qty: e.target.value })} />
                       </Field>
@@ -244,6 +268,14 @@ function ComprasPage() {
               {saving ? "Salvando..." : "Registrar compra"}
             </Button>
           </form>
+          <BarcodeScannerDialog
+            open={scannerItem !== null}
+            onOpenChange={(open) => !open && setScannerItem(null)}
+            onScan={(code) => {
+              if (scannerItem !== null) updateItem(scannerItem, { barcode: normalizeBarcode(code) });
+              toast.success("Codigo lido.");
+            }}
+          />
         </CardContent>
       </Card>
     </div>

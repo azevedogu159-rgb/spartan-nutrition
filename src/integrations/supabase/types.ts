@@ -127,6 +127,7 @@ export type Database = {
       products: {
         Row: {
           avg_cost_brl: number
+          barcode: string | null
           brand: string | null
           created_at: string
           id: string
@@ -138,6 +139,7 @@ export type Database = {
         }
         Insert: {
           avg_cost_brl?: number
+          barcode?: string | null
           brand?: string | null
           created_at?: string
           id?: string
@@ -149,6 +151,7 @@ export type Database = {
         }
         Update: {
           avg_cost_brl?: number
+          barcode?: string | null
           brand?: string | null
           created_at?: string
           id?: string
