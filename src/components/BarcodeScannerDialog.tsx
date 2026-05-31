@@ -14,6 +14,25 @@ type Props = {
   onScan: (code: string) => void;
 };
 
+type ZxingControls = {
+  stop?: () => void;
+};
+
+type ZxingResult = {
+  getText?: () => string;
+  text?: string;
+};
+
+type ZxingModule = {
+  BrowserMultiFormatReader: new () => {
+    decodeFromVideoDevice: (
+      deviceId: string | undefined,
+      video: HTMLVideoElement,
+      callback: (result?: ZxingResult, error?: unknown, controls?: ZxingControls) => void,
+    ) => Promise<ZxingControls | void>;
+  };
+};
+
 declare global {
   interface Window {
     BarcodeDetector?: new (options?: { formats?: string[] }) => {
@@ -42,42 +61,67 @@ export function BarcodeScannerDialog({ open, onOpenChange, onScan }: Props) {
     let cancelled = false;
     let frame = 0;
     let stream: MediaStream | null = null;
+    let zxingControls: ZxingControls | undefined;
 
     async function start() {
-      if (!navigator.mediaDevices?.getUserMedia || !window.BarcodeDetector) {
-        setStatus("Este navegador nao tem leitura nativa de codigo de barras.");
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setStatus("Este navegador nao permite acesso a camera. Digite o codigo manualmente.");
         return;
       }
 
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: "environment" } },
-        });
         const video = videoRef.current;
         if (!video || cancelled) return;
 
-        video.srcObject = stream;
-        await video.play();
+        if (window.BarcodeDetector) {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: { ideal: "environment" } },
+          });
 
-        const detector = new window.BarcodeDetector({ formats });
-        const scan = async () => {
-          if (cancelled || !videoRef.current) return;
-          try {
-            const results = await detector.detect(videoRef.current);
-            const code = results[0]?.rawValue?.trim();
-            if (code) {
-              onScan(code);
-              onOpenChange(false);
-              return;
+          video.srcObject = stream;
+          await video.play();
+
+          const detector = new window.BarcodeDetector({ formats });
+          const scan = async () => {
+            if (cancelled || !videoRef.current) return;
+            try {
+              const results = await detector.detect(videoRef.current);
+              const code = results[0]?.rawValue?.trim();
+              if (code) {
+                onScan(code);
+                onOpenChange(false);
+                return;
+              }
+            } catch {
+              setStatus("Nao consegui ler ainda. Ajuste a distancia e a luz.");
             }
-          } catch {
-            setStatus("Nao consegui ler ainda. Ajuste a distancia e a luz.");
-          }
+            frame = requestAnimationFrame(scan);
+          };
+
+          setStatus("Aponte a camera para o codigo de barras.");
           frame = requestAnimationFrame(scan);
-        };
-        frame = requestAnimationFrame(scan);
+          return;
+        }
+
+        setStatus("Carregando leitor compativel com iPhone...");
+        const { BrowserMultiFormatReader } = (await import(
+          /* @vite-ignore */ "https://esm.sh/@zxing/browser@0.1.5?bundle"
+        )) as ZxingModule;
+        if (cancelled) return;
+
+        const reader = new BrowserMultiFormatReader();
+        zxingControls =
+          (await reader.decodeFromVideoDevice(undefined, video, (result, _error, controls) => {
+            const code = (result?.getText?.() ?? result?.text ?? "").trim();
+            if (!code) return;
+
+            controls?.stop?.();
+            onScan(code);
+            onOpenChange(false);
+          })) ?? undefined;
+        setStatus("Aponte a camera para o codigo de barras.");
       } catch {
-        setStatus("Permita o acesso a camera para escanear.");
+        setStatus("Nao consegui iniciar o leitor. Permita a camera ou digite o codigo manualmente.");
       }
     }
 
@@ -86,6 +130,7 @@ export function BarcodeScannerDialog({ open, onOpenChange, onScan }: Props) {
     return () => {
       cancelled = true;
       cancelAnimationFrame(frame);
+      zxingControls?.stop?.();
       stream?.getTracks().forEach((track) => track.stop());
     };
   }, [onOpenChange, onScan, open]);
