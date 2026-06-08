@@ -15,6 +15,7 @@ import { BarcodeScannerDialog } from "@/components/BarcodeScannerDialog";
 export const Route = createFileRoute("/vendas")({ component: VendasPage });
 
 type Product = { id: string; name: string; barcode: string | null; stock_qty: number; avg_cost_brl: number; suggested_price_brl: number; image_url: string | null };
+type ProductLot = { product_id: string; expires_at: string | null; remaining_qty: number };
 type Customer = { id: string; name: string };
 type Sale = {
   id: string; product_id: string; perfume_name: string; quantity: number; unit_price_brl: number;
@@ -45,11 +46,13 @@ function VendasPage() {
   const [primeiroVenc, setPrimeiroVenc] = useState(todayISO());
   const [list, setList] = useState<Sale[]>([]);
   const [saving, setSaving] = useState(false);
+  const [lotsByProduct, setLotsByProduct] = useState<Record<string, ProductLot[]>>({});
   const savingRef = useRef(false);
 
   const selected = products.find((p) => p.id === productId);
   const suggestedPrice = selected ? Number(selected.suggested_price_brl) || 0 : 0;
   const pricePlaceholder = suggestedPrice > 0 ? `Sugestao: ${brl(suggestedPrice)}` : "0,00";
+  const expiration = selected ? getExpirationStatus(lotsByProduct[selected.id] ?? []) : null;
   const q = Number(qty) || 0, pr = Number(price) || 0;
   const cost = selected ? Number(selected.avg_cost_brl) * q : 0;
   const revenue = pr * q;
@@ -62,20 +65,47 @@ function VendasPage() {
   const [productsMap, setProductsMap] = useState<Record<string, string | null>>({});
 
   const load = async () => {
-    const [p, s, c, all] = await Promise.all([
+    const [p, s, c, all, lots] = await Promise.all([
       supabase.from("products").select("id, name, barcode, stock_qty, avg_cost_brl, suggested_price_brl, image_url").gt("stock_qty", 0).order("name"),
       supabase.from("sales").select("*").order("sale_date", { ascending: false }).limit(50),
       supabase.from("customers").select("id, name").order("name"),
       supabase.from("products").select("id, image_url"),
+      supabase
+        .from("purchase_items")
+        .select("product_id, expires_at, remaining_qty")
+        .gt("remaining_qty", 0)
+        .order("expires_at", { ascending: true, nullsFirst: false }),
     ]);
     setProducts((p.data ?? []) as Product[]);
     setList((s.data ?? []) as Sale[]);
     setCustomers((c.data ?? []) as Customer[]);
+    const openLots = (lots.data ?? []) as ProductLot[];
+    setLotsByProduct(
+      openLots.reduce<Record<string, ProductLot[]>>((acc, lot) => {
+        (acc[lot.product_id] ??= []).push(lot);
+        return acc;
+      }, {}),
+    );
     const m: Record<string, string | null> = {};
     for (const r of (all.data ?? []) as { id: string; image_url: string | null }[]) m[r.id] = r.image_url;
     setProductsMap(m);
   };
   useEffect(() => { load(); }, []);
+
+  const applyProductData = (product: Product) => {
+    setProductId(product.id);
+    setBarcode(normalizeBarcode(product.barcode ?? ""));
+    if (Number(product.suggested_price_brl) > 0) setPrice(String(product.suggested_price_brl));
+  };
+
+  const selectProduct = (id: string) => {
+    const found = products.find((p) => p.id === id);
+    if (!found) {
+      setProductId(id);
+      return;
+    }
+    applyProductData(found);
+  };
 
   const selectByBarcode = (raw: string) => {
     const code = normalizeBarcode(raw);
@@ -86,8 +116,7 @@ function VendasPage() {
       toast.error("Produto nao encontrado para este codigo.");
       return;
     }
-    setProductId(found.id);
-    if (Number(found.suggested_price_brl) > 0) setPrice(String(found.suggested_price_brl));
+    applyProductData(found);
     toast.success(`${found.name} selecionado.`);
   };
 
@@ -202,7 +231,7 @@ function VendasPage() {
               <div className="flex items-center gap-3">
                 {selected && <ProductImage url={selected.image_url} size={48} />}
                 <div className="flex-1">
-                  <Select value={productId} onValueChange={setProductId}>
+                  <Select value={productId} onValueChange={selectProduct}>
                     <SelectTrigger><SelectValue placeholder="Selecione um produto do estoque" /></SelectTrigger>
                     <SelectContent>
                       {products.map((p) => (
@@ -214,6 +243,23 @@ function VendasPage() {
                   </Select>
                 </div>
               </div>
+              {selected && (
+                <div className="mt-2 rounded-md bg-secondary p-2 text-xs text-muted-foreground">
+                  <div>Codigo: <span className="font-medium text-foreground">{selected.barcode || "sem codigo"}</span></div>
+                  <div>
+                    Preco sugerido:{" "}
+                    <span className="font-medium text-foreground">
+                      {suggestedPrice > 0 ? brl(suggestedPrice) : "sem sugestao"}
+                    </span>
+                  </div>
+                  <div>
+                    Validade:{" "}
+                    <span className={expiration?.className ?? "font-medium text-foreground"}>
+                      {expiration ? `${expiration.dateLabel} - ${expiration.label}` : "sem validade informada"}
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
             <div className="space-y-1.5 md:col-span-2">
               <Label className="text-xs">Cliente {(isParcelado || isFiado) && "*"}</Label>
@@ -346,4 +392,41 @@ function Stat({ label, value, accent }: { label: string; value: string; accent?:
       <div className={`font-semibold ${accent ?? ""}`}>{value}</div>
     </div>
   );
+}
+
+function getExpirationStatus(lots: ProductLot[]): {
+  dateLabel: string;
+  label: string;
+  className: string;
+} | null {
+  const first = lots.find((lot) => lot.expires_at);
+  if (!first?.expires_at) return null;
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const expires = new Date(`${first.expires_at}T00:00:00`);
+  const days = Math.ceil((expires.getTime() - today.getTime()) / 86400000);
+  const dateLabel = expires.toLocaleDateString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "2-digit",
+  });
+
+  if (days < 0) {
+    return {
+      dateLabel,
+      label: `vencido ha ${Math.abs(days)} dias`,
+      className: "font-medium text-destructive",
+    };
+  }
+  if (days === 0) {
+    return { dateLabel, label: "vence hoje", className: "font-medium text-destructive" };
+  }
+  if (days <= 30) {
+    return { dateLabel, label: `vence em ${days} dias`, className: "font-medium text-destructive" };
+  }
+  if (days <= 90) {
+    return { dateLabel, label: `vence em ${days} dias`, className: "font-medium text-amber-700" };
+  }
+  return { dateLabel, label: `vence em ${days} dias`, className: "font-medium text-success" };
 }
