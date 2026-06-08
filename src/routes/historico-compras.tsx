@@ -14,14 +14,12 @@ type Order = {
   id: string;
   supplier: string | null;
   country: string | null;
-  exchange_rate: number;
-  supplier_fee_pct: number;
-  total_usd: number;
   total_brl: number;
   payment_method: string | null;
   notes: string | null;
   purchase_date: string;
 };
+
 type Item = {
   id: string;
   purchase_order_id: string;
@@ -73,10 +71,10 @@ function HistoricoPage() {
   }, [orders, q, itemsByOrder]);
 
   const removeOrder = async (id: string) => {
-    if (!confirm("Excluir esta compra inteira? Os itens serão revertidos do estoque.")) return;
+    if (!confirm("Excluir esta compra inteira? Os itens serao revertidos do estoque.")) return;
     const { error } = await supabase.from("purchase_orders").delete().eq("id", id);
     if (error) return toast.error(error.message);
-    toast.success("Compra excluída.");
+    toast.success("Compra excluida.");
     load();
   };
 
@@ -84,7 +82,7 @@ function HistoricoPage() {
     <div className="space-y-6">
       <Card className="shadow-soft">
         <CardHeader>
-          <CardTitle>Histórico de compras</CardTitle>
+          <CardTitle>Historico de compras</CardTitle>
           <div className="relative mt-2">
             <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input className="pl-9" placeholder="Buscar por produto, marca, fornecedor, data..." value={q} onChange={(e) => setQ(e.target.value)} />
@@ -111,17 +109,15 @@ function HistoricoPage() {
                       <div className="min-w-0 flex-1">
                         <div className="font-medium">
                           {new Date(o.purchase_date).toLocaleDateString("pt-BR")}
-                          {o.supplier && ` · ${o.supplier}`}
+                          {o.supplier && ` - ${o.supplier}`}
                         </div>
                         <div className="text-xs text-muted-foreground">
-                          {its.length} produtos · {totalQty} un. · cotação {Number(o.exchange_rate).toFixed(4)}
-                          {Number(o.supplier_fee_pct) > 0 && ` · taxa ${Number(o.supplier_fee_pct)}%`}
+                          {its.length} produtos - {totalQty} un.
                         </div>
                         <div className="text-[11px] text-muted-foreground mt-0.5">ID: {o.id.slice(0, 8)}</div>
                       </div>
                       <div className="text-right">
                         <div className="font-semibold text-primary">{brl(Number(o.total_brl))}</div>
-                        <div className="text-xs text-muted-foreground">USD {Number(o.total_usd).toFixed(2)}</div>
                       </div>
                       {isOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                     </button>
@@ -132,7 +128,7 @@ function HistoricoPage() {
                           <Stat label="Vendidos" value={`${sold} un.`} />
                           <Stat label="Em estoque" value={`${remaining} un.`} />
                           <Stat label="Lucro estimado" value={brl(estProfit)} accent="text-success" />
-                          <Stat label="Pagamento" value={o.payment_method ?? "—"} />
+                          <Stat label="Pagamento" value={o.payment_method ?? "-"} />
                         </div>
 
                         <ul className="divide-y divide-border">
@@ -141,8 +137,8 @@ function HistoricoPage() {
                               <div className="min-w-0 flex-1">
                                 <div className="text-sm font-medium truncate">{it.perfume_name}</div>
                                 <div className="text-xs text-muted-foreground">
-                                  {Number(it.quantity)} un. · custo unit. {brl(Number(it.unit_brl))}
-                                  {Number(it.suggested_price_brl) > 0 && ` · venda sug. ${brl(Number(it.suggested_price_brl))}`}
+                                  {Number(it.quantity)} un. - custo unit. {brl(Number(it.unit_brl))}
+                                  {Number(it.suggested_price_brl) > 0 && ` - venda sug. ${brl(Number(it.suggested_price_brl))}`}
                                 </div>
                               </div>
                               <div className="text-right text-xs">

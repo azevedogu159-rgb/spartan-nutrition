@@ -19,12 +19,12 @@ type Item = {
   brand: string;
   barcode: string;
   qty: string;
-  usd: string;
+  cost: string;
   suggested: string;
 };
 
 function emptyItem(): Item {
-  return { name: "", brand: "", barcode: "", qty: "", usd: "", suggested: "" };
+  return { name: "", brand: "", barcode: "", qty: "", cost: "", suggested: "" };
 }
 
 function todayISO() { return new Date().toISOString().slice(0, 10); }
@@ -33,8 +33,6 @@ function normalizeBarcode(value: string) { return value.replace(/\D/g, ""); }
 function ComprasPage() {
   const [supplier, setSupplier] = useState("");
   const [country, setCountry] = useState("");
-  const [rate, setRate] = useState("");
-  const [fee, setFee] = useState("");
   const [payment, setPayment] = useState("a_vista");
   const [notes, setNotes] = useState("");
   const [date, setDate] = useState(todayISO());
@@ -42,21 +40,16 @@ function ComprasPage() {
   const [saving, setSaving] = useState(false);
   const [scannerItem, setScannerItem] = useState<number | null>(null);
 
-  const feeMul = 1 + (Number(fee) || 0) / 100;
-  const r = Number(rate) || 0;
-
   const totals = useMemo(() => {
-    let usd = 0, brlSum = 0, profit = 0;
+    let brlSum = 0, profit = 0;
     for (const it of items) {
       const q = Number(it.qty) || 0;
-      const u = Number(it.usd) || 0;
-      const unitBrl = u * r * feeMul;
-      usd += u * q;
+      const unitBrl = Number(it.cost) || 0;
       brlSum += unitBrl * q;
       profit += ((Number(it.suggested) || 0) - unitBrl) * q;
     }
-    return { usd, brl: brlSum, profit };
-  }, [items, r, feeMul]);
+    return { brl: brlSum, profit };
+  }, [items]);
 
   const updateItem = (i: number, patch: Partial<Item>) => {
     setItems((prev) => prev.map((it, idx) => (idx === i ? { ...it, ...patch } : it)));
@@ -66,8 +59,7 @@ function ComprasPage() {
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!rate) return toast.error("Informe a cotação do dólar.");
-    const valid = items.filter((it) => it.name.trim() && it.qty && it.usd);
+    const valid = items.filter((it) => it.name.trim() && it.qty && it.cost);
     if (valid.length === 0) return toast.error("Adicione ao menos um produto.");
 
     setSaving(true);
@@ -75,9 +67,9 @@ function ComprasPage() {
       const { data: order, error: oErr } = await supabase.from("purchase_orders").insert({
         supplier: supplier.trim() || null,
         country: country.trim() || null,
-        exchange_rate: r,
-        supplier_fee_pct: Number(fee) || 0,
-        total_usd: totals.usd,
+        exchange_rate: 1,
+        supplier_fee_pct: 0,
+        total_usd: 0,
         total_brl: totals.brl,
         payment_method: payment,
         notes: notes.trim() || null,
@@ -104,17 +96,16 @@ function ComprasPage() {
             .update({ brand: it.brand.trim() || null, barcode: barcode || null })
             .eq("id", productId);
         }
-        const q = Number(it.qty), u = Number(it.usd);
-        const unitBrl = u * r * feeMul;
+        const q = Number(it.qty), unitBrl = Number(it.cost);
         const { error: iErr } = await supabase.from("purchase_items").insert({
           purchase_order_id: order.id,
           product_id: productId,
           perfume_name: cleanName,
           brand: it.brand.trim() || null,
           quantity: q,
-          unit_usd: u,
-          exchange_rate: r,
-          supplier_fee_pct: Number(fee) || 0,
+          unit_usd: 0,
+          exchange_rate: 1,
+          supplier_fee_pct: 0,
           unit_brl: unitBrl,
           total_brl: unitBrl * q,
           suggested_price_brl: Number(it.suggested) || 0,
@@ -124,7 +115,7 @@ function ComprasPage() {
       }
 
       toast.success("Compra registrada!");
-      setSupplier(""); setCountry(""); setFee(""); setNotes(""); setItems([emptyItem()]);
+      setSupplier(""); setCountry(""); setNotes(""); setItems([emptyItem()]);
     } catch (err) {
       toast.error((err as Error).message);
     } finally {
@@ -137,7 +128,7 @@ function ComprasPage() {
       <div className="flex justify-end">
         <Link to="/historico-compras">
           <Button variant="outline" size="sm">
-            <History className="h-4 w-4 mr-1.5" /> Histórico de compras
+            <History className="h-4 w-4 mr-1.5" /> Historico de compras
           </Button>
         </Link>
       </div>
@@ -150,8 +141,8 @@ function ComprasPage() {
               <Field label="Fornecedor">
                 <Input value={supplier} onChange={(e) => setSupplier(e.target.value)} placeholder="Ex.: Distribuidora, Growth, Max Titanium" />
               </Field>
-              <Field label="País / origem">
-                <Input value={country} onChange={(e) => setCountry(e.target.value)} placeholder="Ex.: Brasil, importado, fornecedor local" />
+              <Field label="Pais / origem">
+                <Input value={country} onChange={(e) => setCountry(e.target.value)} placeholder="Ex.: Brasil, fornecedor local" />
               </Field>
               <Field label="Data da compra">
                 <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
@@ -160,22 +151,16 @@ function ComprasPage() {
                 <Select value={payment} onValueChange={setPayment}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="a_vista">À vista</SelectItem>
+                    <SelectItem value="a_vista">A vista</SelectItem>
                     <SelectItem value="pix">Pix</SelectItem>
-                    <SelectItem value="cartao">Cartão</SelectItem>
+                    <SelectItem value="cartao">Cartao</SelectItem>
                     <SelectItem value="dinheiro">Dinheiro</SelectItem>
                     <SelectItem value="parcelado">Parcelado</SelectItem>
                   </SelectContent>
                 </Select>
               </Field>
-              <Field label="Cotação do dólar (R$) *">
-                <Input type="number" step="0.0001" value={rate} onChange={(e) => setRate(e.target.value)} placeholder="5,1500" />
-              </Field>
-              <Field label="Taxa do fornecedor (%)">
-                <Input type="number" step="0.01" value={fee} onChange={(e) => setFee(e.target.value)} placeholder="Ex.: 22" />
-              </Field>
               <div className="md:col-span-2">
-                <Field label="Observações">
+                <Field label="Observacoes">
                   <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} />
                 </Field>
               </div>
@@ -191,8 +176,7 @@ function ComprasPage() {
 
               {items.map((it, i) => {
                 const q = Number(it.qty) || 0;
-                const u = Number(it.usd) || 0;
-                const unitBrl = u * r * feeMul;
+                const unitBrl = Number(it.cost) || 0;
                 const lineTotal = unitBrl * q;
                 return (
                   <div key={i} className="rounded-md border border-border p-3 space-y-3">
@@ -209,7 +193,7 @@ function ComprasPage() {
                         <Input value={it.name} onChange={(e) => updateItem(i, { name: e.target.value })} placeholder="Ex.: Whey Protein 900g Chocolate" />
                       </Field>
                       <Field label="Marca / linha">
-                        <Input value={it.brand} onChange={(e) => updateItem(i, { brand: e.target.value })} placeholder="Ex.: Integralmédica, Dark Lab, Soldiers" />
+                        <Input value={it.brand} onChange={(e) => updateItem(i, { brand: e.target.value })} placeholder="Ex.: Integralmedica, Dark Lab, Soldiers" />
                       </Field>
                       <Field label="Codigo de barras">
                         <div className="flex gap-2">
@@ -227,10 +211,10 @@ function ComprasPage() {
                       <Field label="Quantidade *">
                         <Input type="number" min="1" value={it.qty} onChange={(e) => updateItem(i, { qty: e.target.value })} />
                       </Field>
-                      <Field label="Valor unit. (USD) *">
-                        <Input type="number" step="0.01" value={it.usd} onChange={(e) => updateItem(i, { usd: e.target.value })} />
+                      <Field label="Custo unit. (R$) *">
+                        <Input type="number" step="0.01" value={it.cost} onChange={(e) => updateItem(i, { cost: e.target.value })} />
                       </Field>
-                      <Field label="Preço sugerido venda (R$)">
+                      <Field label="Preco sugerido venda (R$)">
                         <Input type="number" step="0.01" value={it.suggested} onChange={(e) => updateItem(i, { suggested: e.target.value })} />
                       </Field>
                       <div className="grid grid-cols-2 gap-3 rounded-md bg-secondary p-2 text-xs">
@@ -249,11 +233,7 @@ function ComprasPage() {
               })}
             </div>
 
-            <div className="grid grid-cols-3 gap-3 rounded-md bg-secondary p-3 text-sm">
-              <div>
-                <div className="text-xs text-muted-foreground">Total USD</div>
-                <div className="font-semibold">${totals.usd.toFixed(2)}</div>
-              </div>
+            <div className="grid grid-cols-2 gap-3 rounded-md bg-secondary p-3 text-sm">
               <div>
                 <div className="text-xs text-muted-foreground">Total R$</div>
                 <div className="font-semibold text-primary">{brl(totals.brl)}</div>
