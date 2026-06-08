@@ -30,6 +30,10 @@ type ZxingModule = {
       video: HTMLVideoElement,
       callback: (result?: ZxingResult, error?: unknown, controls?: ZxingControls) => void,
     ) => Promise<ZxingControls | void>;
+    decodeFromVideoElement: (
+      video: HTMLVideoElement,
+      callback: (result?: ZxingResult, error?: unknown, controls?: ZxingControls) => void,
+    ) => Promise<ZxingControls | void>;
   };
 };
 
@@ -63,6 +67,23 @@ export function BarcodeScannerDialog({ open, onOpenChange, onScan }: Props) {
     let stream: MediaStream | null = null;
     let zxingControls: ZxingControls | undefined;
 
+    async function startCamera(video: HTMLVideoElement) {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: "environment" },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+        audio: false,
+      });
+
+      video.srcObject = stream;
+      video.muted = true;
+      video.setAttribute("playsinline", "true");
+      video.setAttribute("autoplay", "true");
+      await video.play();
+    }
+
     async function start() {
       if (!navigator.mediaDevices?.getUserMedia) {
         setStatus("Este navegador nao permite acesso a camera. Digite o codigo manualmente.");
@@ -74,12 +95,7 @@ export function BarcodeScannerDialog({ open, onOpenChange, onScan }: Props) {
         if (!video || cancelled) return;
 
         if (window.BarcodeDetector) {
-          stream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: { ideal: "environment" } },
-          });
-
-          video.srcObject = stream;
-          await video.play();
+          await startCamera(video);
 
           const detector = new window.BarcodeDetector({ formats });
           const scan = async () => {
@@ -109,9 +125,12 @@ export function BarcodeScannerDialog({ open, onOpenChange, onScan }: Props) {
         )) as ZxingModule;
         if (cancelled) return;
 
+        await startCamera(video);
+        if (cancelled) return;
+
         const reader = new BrowserMultiFormatReader();
         zxingControls =
-          (await reader.decodeFromVideoDevice(undefined, video, (result, _error, controls) => {
+          (await reader.decodeFromVideoElement(video, (result, _error, controls) => {
             const code = (result?.getText?.() ?? result?.text ?? "").trim();
             if (!code) return;
 
@@ -146,6 +165,7 @@ export function BarcodeScannerDialog({ open, onOpenChange, onScan }: Props) {
         <div className="space-y-3">
           <video
             ref={videoRef}
+            autoPlay
             muted
             playsInline
             className="aspect-[4/3] w-full rounded-md bg-black object-cover"
