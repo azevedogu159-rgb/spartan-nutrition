@@ -168,6 +168,7 @@ export type Database = {
           brand: string | null
           created_at: string
           exchange_rate: number
+          expires_at: string | null
           id: string
           perfume_name: string
           product_id: string
@@ -184,6 +185,7 @@ export type Database = {
           brand?: string | null
           created_at?: string
           exchange_rate?: number
+          expires_at?: string | null
           id?: string
           perfume_name: string
           product_id: string
@@ -200,6 +202,7 @@ export type Database = {
           brand?: string | null
           created_at?: string
           exchange_rate?: number
+          expires_at?: string | null
           id?: string
           perfume_name?: string
           product_id?: string

@@ -26,6 +26,7 @@ type Item = {
   product_id: string;
   perfume_name: string;
   brand: string | null;
+  expires_at: string | null;
   quantity: number;
   unit_brl: number;
   total_brl: number;
@@ -138,6 +139,7 @@ function HistoricoPage() {
                                 <div className="text-sm font-medium truncate">{it.perfume_name}</div>
                                 <div className="text-xs text-muted-foreground">
                                   {Number(it.quantity)} un. - custo unit. {brl(Number(it.unit_brl))}
+                                  {it.expires_at && ` - validade ${formatDate(it.expires_at)}`}
                                   {Number(it.suggested_price_brl) > 0 && ` - venda sug. ${brl(Number(it.suggested_price_brl))}`}
                                 </div>
                               </div>
@@ -179,4 +181,8 @@ function Stat({ label, value, accent }: { label: string; value: string; accent?:
       <div className={`font-semibold ${accent ?? ""}`}>{value}</div>
     </div>
   );
+}
+
+function formatDate(value: string) {
+  return new Date(`${value}T00:00:00`).toLocaleDateString("pt-BR");
 }

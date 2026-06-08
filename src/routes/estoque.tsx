@@ -32,8 +32,15 @@ type Product = {
   image_url: string | null;
 };
 
+type ProductLot = {
+  product_id: string;
+  expires_at: string | null;
+  remaining_qty: number;
+};
+
 function EstoquePage() {
   const [items, setItems] = useState<Product[]>([]);
+  const [lotsByProduct, setLotsByProduct] = useState<Record<string, ProductLot[]>>({});
   const [q, setQ] = useState("");
   const [uploadingId, setUploadingId] = useState<string | null>(null);
   const [savingPriceId, setSavingPriceId] = useState<string | null>(null);
@@ -41,9 +48,23 @@ function EstoquePage() {
   const fileRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   const load = async () => {
-    const { data } = await supabase.from("products").select("*").order("name");
+    const [{ data }, { data: lots }] = await Promise.all([
+      supabase.from("products").select("*").order("name"),
+      supabase
+        .from("purchase_items")
+        .select("product_id, expires_at, remaining_qty")
+        .gt("remaining_qty", 0)
+        .order("expires_at", { ascending: true, nullsFirst: false }),
+    ]);
     const products = (data ?? []) as Product[];
+    const openLots = (lots ?? []) as ProductLot[];
     setItems(products);
+    setLotsByProduct(
+      openLots.reduce<Record<string, ProductLot[]>>((acc, lot) => {
+        (acc[lot.product_id] ??= []).push(lot);
+        return acc;
+      }, {}),
+    );
     setPriceDrafts(
       products.reduce<Record<string, string>>((acc, p) => {
         acc[p.id] = Number(p.suggested_price_brl || 0) > 0 ? String(p.suggested_price_brl) : "";
@@ -200,6 +221,7 @@ function EstoquePage() {
                 removePhoto={removePhoto}
                 setPriceDrafts={setPriceDrafts}
                 saveSuggestedPrice={saveSuggestedPrice}
+                lotsByProduct={lotsByProduct}
               />
               <ProductSection
                 title="Produtos zerados"
@@ -214,6 +236,7 @@ function EstoquePage() {
                 removePhoto={removePhoto}
                 setPriceDrafts={setPriceDrafts}
                 saveSuggestedPrice={saveSuggestedPrice}
+                lotsByProduct={lotsByProduct}
               />
             </div>
           )}
@@ -236,6 +259,7 @@ function ProductSection({
   removePhoto,
   setPriceDrafts,
   saveSuggestedPrice,
+  lotsByProduct,
 }: {
   title: string;
   emptyText: string;
@@ -249,6 +273,7 @@ function ProductSection({
   removePhoto: (p: Product) => void;
   setPriceDrafts: Dispatch<SetStateAction<Record<string, string>>>;
   saveSuggestedPrice: (p: Product) => void;
+  lotsByProduct: Record<string, ProductLot[]>;
 }) {
   return (
     <section className="space-y-2">
@@ -280,6 +305,7 @@ function ProductSection({
                 }))
               }
               saveSuggestedPrice={saveSuggestedPrice}
+              lots={lotsByProduct[p.id] ?? []}
             />
           ))}
         </ul>
@@ -299,6 +325,7 @@ function ProductRow({
   removePhoto,
   onPriceChange,
   saveSuggestedPrice,
+  lots,
 }: {
   product: Product;
   fileRefs: MutableRefObject<Record<string, HTMLInputElement | null>>;
@@ -310,9 +337,11 @@ function ProductRow({
   removePhoto: (p: Product) => void;
   onPriceChange: (value: string) => void;
   saveSuggestedPrice: (p: Product) => void;
+  lots: ProductLot[];
 }) {
   const qty = Number(p.stock_qty);
   const status = getStockStatus(qty);
+  const expiration = getExpirationStatus(lots);
   const suggestedPrice = Number(p.suggested_price_brl || 0);
   const potentialRevenue = qty > 0 ? qty * suggestedPrice : 0;
   const potentialProfit = potentialRevenue - (qty > 0 ? qty * Number(p.avg_cost_brl) : 0);
@@ -327,6 +356,11 @@ function ProductRow({
             <Badge variant={status.variant} className={status.className}>
               {status.label}
             </Badge>
+            {expiration && (
+              <Badge variant={expiration.variant} className={expiration.className}>
+                {expiration.label}
+              </Badge>
+            )}
           </div>
           <div className="text-xs text-muted-foreground">
             {p.brand || "-"}
@@ -391,6 +425,7 @@ function ProductRow({
           {qty > 0 && (
             <div className="space-y-0.5 text-xs text-muted-foreground">
               <div>custo méd. {brl(Number(p.avg_cost_brl))}</div>
+              {expiration?.date && <div>validade {formatDate(expiration.date)}</div>}
               <div>potencial {brl(potentialRevenue)}</div>
               <div className={potentialProfit >= 0 ? "text-success" : "text-destructive"}>
                 lucro pot. {brl(potentialProfit)}
@@ -413,4 +448,49 @@ function getStockStatus(qty: number): {
   if (qty <= 1)
     return { label: "Baixo estoque", variant: "secondary", className: "text-accent-foreground" };
   return { label: "Em estoque", variant: "secondary", className: "border-success/30 text-success" };
+}
+
+function getExpirationStatus(lots: ProductLot[]): {
+  label: string;
+  date: string;
+  variant: ComponentProps<typeof Badge>["variant"];
+  className?: string;
+} | null {
+  const first = lots.find((lot) => lot.expires_at);
+  if (!first?.expires_at) return null;
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const expires = new Date(`${first.expires_at}T00:00:00`);
+  const days = Math.ceil((expires.getTime() - today.getTime()) / 86400000);
+
+  if (days < 0) {
+    return { label: "Vencido", date: first.expires_at, variant: "destructive" };
+  }
+  if (days <= 30) {
+    return {
+      label: `Vence em ${days}d`,
+      date: first.expires_at,
+      variant: "secondary",
+      className: "border-destructive/30 text-destructive",
+    };
+  }
+  if (days <= 90) {
+    return {
+      label: `Vence em ${days}d`,
+      date: first.expires_at,
+      variant: "secondary",
+      className: "border-amber-500/30 text-amber-700",
+    };
+  }
+  return {
+    label: "Validade ok",
+    date: first.expires_at,
+    variant: "secondary",
+    className: "border-success/30 text-success",
+  };
+}
+
+function formatDate(value: string) {
+  return new Date(`${value}T00:00:00`).toLocaleDateString("pt-BR");
 }

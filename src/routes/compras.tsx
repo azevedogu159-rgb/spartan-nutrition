@@ -20,11 +20,12 @@ type Item = {
   barcode: string;
   qty: string;
   cost: string;
+  expiresAt: string;
   suggested: string;
 };
 
 function emptyItem(): Item {
-  return { name: "", brand: "", barcode: "", qty: "", cost: "", suggested: "" };
+  return { name: "", brand: "", barcode: "", qty: "", cost: "", expiresAt: "", suggested: "" };
 }
 
 function todayISO() { return new Date().toISOString().slice(0, 10); }
@@ -59,8 +60,11 @@ function ComprasPage() {
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const valid = items.filter((it) => it.name.trim() && it.qty && it.cost);
+    const valid = items.filter((it) => it.name.trim() && it.qty && it.cost && it.expiresAt);
     if (valid.length === 0) return toast.error("Adicione ao menos um produto.");
+    if (items.some((it) => it.name.trim() && (!it.expiresAt || !it.qty || !it.cost))) {
+      return toast.error("Informe quantidade, custo e validade dos produtos preenchidos.");
+    }
 
     setSaving(true);
     try {
@@ -108,6 +112,7 @@ function ComprasPage() {
           supplier_fee_pct: 0,
           unit_brl: unitBrl,
           total_brl: unitBrl * q,
+          expires_at: it.expiresAt,
           suggested_price_brl: Number(it.suggested) || 0,
           remaining_qty: q,
         });
@@ -210,6 +215,9 @@ function ComprasPage() {
                       </Field>
                       <Field label="Quantidade *">
                         <Input type="number" min="1" value={it.qty} onChange={(e) => updateItem(i, { qty: e.target.value })} />
+                      </Field>
+                      <Field label="Validade *">
+                        <Input type="date" value={it.expiresAt} onChange={(e) => updateItem(i, { expiresAt: e.target.value })} />
                       </Field>
                       <Field label="Custo unit. (R$) *">
                         <Input type="number" step="0.01" value={it.cost} onChange={(e) => updateItem(i, { cost: e.target.value })} />
