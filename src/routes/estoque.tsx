@@ -38,13 +38,22 @@ type ProductLot = {
   remaining_qty: number;
 };
 
+type ProductDraft = {
+  name: string;
+  brand: string;
+  barcode: string;
+};
+
 function EstoquePage() {
   const [items, setItems] = useState<Product[]>([]);
   const [lotsByProduct, setLotsByProduct] = useState<Record<string, ProductLot[]>>({});
   const [q, setQ] = useState("");
   const [uploadingId, setUploadingId] = useState<string | null>(null);
   const [savingPriceId, setSavingPriceId] = useState<string | null>(null);
+  const [savingDetailsId, setSavingDetailsId] = useState<string | null>(null);
+  const [deletingProductId, setDeletingProductId] = useState<string | null>(null);
   const [priceDrafts, setPriceDrafts] = useState<Record<string, string>>({});
+  const [productDrafts, setProductDrafts] = useState<Record<string, ProductDraft>>({});
   const fileRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   const load = async () => {
@@ -68,6 +77,16 @@ function EstoquePage() {
     setPriceDrafts(
       products.reduce<Record<string, string>>((acc, p) => {
         acc[p.id] = Number(p.suggested_price_brl || 0) > 0 ? String(p.suggested_price_brl) : "";
+        return acc;
+      }, {}),
+    );
+    setProductDrafts(
+      products.reduce<Record<string, ProductDraft>>((acc, p) => {
+        acc[p.id] = {
+          name: p.name,
+          brand: p.brand ?? "",
+          barcode: p.barcode ?? "",
+        };
         return acc;
       }, {}),
     );
@@ -159,6 +178,65 @@ function EstoquePage() {
     setPriceDrafts((prev) => ({ ...prev, [p.id]: price > 0 ? String(price) : "" }));
   };
 
+  const saveProductDetails = async (p: Product) => {
+    const draft = productDrafts[p.id];
+    if (!draft) return;
+    const name = draft.name.trim();
+    const brand = draft.brand.trim();
+    const barcode = draft.barcode.replace(/\D/g, "");
+    if (!name) return toast.error("Informe o nome do produto.");
+
+    setSavingDetailsId(p.id);
+    const { error } = await supabase
+      .from("products")
+      .update({
+        name,
+        brand: brand || null,
+        barcode: barcode || null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", p.id);
+    setSavingDetailsId(null);
+
+    if (error) return toast.error(error.message);
+    toast.success("Produto atualizado.");
+    setItems((prev) =>
+      prev.map((item) => (item.id === p.id ? { ...item, name, brand: brand || null, barcode: barcode || null } : item)),
+    );
+    setProductDrafts((prev) => ({ ...prev, [p.id]: { name, brand, barcode } }));
+  };
+
+  const deleteProduct = async (p: Product) => {
+    if (Number(p.stock_qty) > 0) {
+      return toast.error("Produto com estoque nao pode ser excluido. Exclua/ajuste os lotes primeiro.");
+    }
+    if (!confirm(`Excluir "${p.name}" do estoque? Use isso apenas para cadastros de teste ou produtos sem historico.`)) return;
+
+    setDeletingProductId(p.id);
+    const [purchaseItems, sales, tests] = await Promise.all([
+      supabase.from("purchase_items").select("id", { count: "exact", head: true }).eq("product_id", p.id),
+      supabase.from("sales").select("id", { count: "exact", head: true }).eq("product_id", p.id),
+      supabase.from("partner_tests").select("id", { count: "exact", head: true }).eq("product_id", p.id),
+    ]);
+
+    if (purchaseItems.error || sales.error || tests.error) {
+      setDeletingProductId(null);
+      return toast.error(purchaseItems.error?.message || sales.error?.message || tests.error?.message || "Erro ao verificar historico.");
+    }
+
+    const hasHistory = (purchaseItems.count ?? 0) + (sales.count ?? 0) + (tests.count ?? 0) > 0;
+    if (hasHistory) {
+      setDeletingProductId(null);
+      return toast.error("Nao exclui produto com historico de compra, venda ou teste. Edite o cadastro se precisar.");
+    }
+
+    const { error } = await supabase.from("products").delete().eq("id", p.id);
+    setDeletingProductId(null);
+    if (error) return toast.error(error.message);
+    toast.success("Produto excluido.");
+    load();
+  };
+
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -215,12 +293,18 @@ function EstoquePage() {
                 fileRefs={fileRefs}
                 uploadingId={uploadingId}
                 savingPriceId={savingPriceId}
+                savingDetailsId={savingDetailsId}
+                deletingProductId={deletingProductId}
                 priceDrafts={priceDrafts}
+                productDrafts={productDrafts}
                 onPick={onPick}
                 onFile={onFile}
                 removePhoto={removePhoto}
                 setPriceDrafts={setPriceDrafts}
+                setProductDrafts={setProductDrafts}
                 saveSuggestedPrice={saveSuggestedPrice}
+                saveProductDetails={saveProductDetails}
+                deleteProduct={deleteProduct}
                 lotsByProduct={lotsByProduct}
               />
               <ProductSection
@@ -230,12 +314,18 @@ function EstoquePage() {
                 fileRefs={fileRefs}
                 uploadingId={uploadingId}
                 savingPriceId={savingPriceId}
+                savingDetailsId={savingDetailsId}
+                deletingProductId={deletingProductId}
                 priceDrafts={priceDrafts}
+                productDrafts={productDrafts}
                 onPick={onPick}
                 onFile={onFile}
                 removePhoto={removePhoto}
                 setPriceDrafts={setPriceDrafts}
+                setProductDrafts={setProductDrafts}
                 saveSuggestedPrice={saveSuggestedPrice}
+                saveProductDetails={saveProductDetails}
+                deleteProduct={deleteProduct}
                 lotsByProduct={lotsByProduct}
               />
             </div>
@@ -253,12 +343,18 @@ function ProductSection({
   fileRefs,
   uploadingId,
   savingPriceId,
+  savingDetailsId,
+  deletingProductId,
   priceDrafts,
+  productDrafts,
   onPick,
   onFile,
   removePhoto,
   setPriceDrafts,
+  setProductDrafts,
   saveSuggestedPrice,
+  saveProductDetails,
+  deleteProduct,
   lotsByProduct,
 }: {
   title: string;
@@ -267,12 +363,18 @@ function ProductSection({
   fileRefs: MutableRefObject<Record<string, HTMLInputElement | null>>;
   uploadingId: string | null;
   savingPriceId: string | null;
+  savingDetailsId: string | null;
+  deletingProductId: string | null;
   priceDrafts: Record<string, string>;
+  productDrafts: Record<string, ProductDraft>;
   onPick: (id: string) => void;
   onFile: (p: Product, file: File) => void;
   removePhoto: (p: Product) => void;
   setPriceDrafts: Dispatch<SetStateAction<Record<string, string>>>;
+  setProductDrafts: Dispatch<SetStateAction<Record<string, ProductDraft>>>;
   saveSuggestedPrice: (p: Product) => void;
+  saveProductDetails: (p: Product) => void;
+  deleteProduct: (p: Product) => void;
   lotsByProduct: Record<string, ProductLot[]>;
 }) {
   return (
@@ -294,10 +396,24 @@ function ProductSection({
               fileRefs={fileRefs}
               uploadingId={uploadingId}
               savingPriceId={savingPriceId}
+              savingDetailsId={savingDetailsId}
+              deletingProductId={deletingProductId}
               priceDraft={priceDrafts[p.id] ?? ""}
+              productDraft={productDrafts[p.id] ?? { name: p.name, brand: p.brand ?? "", barcode: p.barcode ?? "" }}
               onPick={onPick}
               onFile={onFile}
               removePhoto={removePhoto}
+              onDraftChange={(patch) =>
+                setProductDrafts((prev) => ({
+                  ...prev,
+                  [p.id]: {
+                    name: prev[p.id]?.name ?? p.name,
+                    brand: prev[p.id]?.brand ?? p.brand ?? "",
+                    barcode: prev[p.id]?.barcode ?? p.barcode ?? "",
+                    ...patch,
+                  },
+                }))
+              }
               onPriceChange={(value) =>
                 setPriceDrafts((prev) => ({
                   ...prev,
@@ -305,6 +421,8 @@ function ProductSection({
                 }))
               }
               saveSuggestedPrice={saveSuggestedPrice}
+              saveProductDetails={saveProductDetails}
+              deleteProduct={deleteProduct}
               lots={lotsByProduct[p.id] ?? []}
             />
           ))}
@@ -319,24 +437,36 @@ function ProductRow({
   fileRefs,
   uploadingId,
   savingPriceId,
+  savingDetailsId,
+  deletingProductId,
   priceDraft,
+  productDraft,
   onPick,
   onFile,
   removePhoto,
+  onDraftChange,
   onPriceChange,
   saveSuggestedPrice,
+  saveProductDetails,
+  deleteProduct,
   lots,
 }: {
   product: Product;
   fileRefs: MutableRefObject<Record<string, HTMLInputElement | null>>;
   uploadingId: string | null;
   savingPriceId: string | null;
+  savingDetailsId: string | null;
+  deletingProductId: string | null;
   priceDraft: string;
+  productDraft: ProductDraft;
   onPick: (id: string) => void;
   onFile: (p: Product, file: File) => void;
   removePhoto: (p: Product) => void;
+  onDraftChange: (patch: Partial<ProductDraft>) => void;
   onPriceChange: (value: string) => void;
   saveSuggestedPrice: (p: Product) => void;
+  saveProductDetails: (p: Product) => void;
+  deleteProduct: (p: Product) => void;
   lots: ProductLot[];
 }) {
   const qty = Number(p.stock_qty);
@@ -365,6 +495,35 @@ function ProductRow({
           <div className="text-xs text-muted-foreground">
             {p.brand || "-"}
             {p.barcode ? ` · ${p.barcode}` : ""}
+          </div>
+          <div className="mt-2 grid gap-2 md:grid-cols-[minmax(180px,1.2fr)_minmax(120px,0.8fr)_minmax(120px,0.8fr)_auto]">
+            <Input
+              value={productDraft.name}
+              onChange={(e) => onDraftChange({ name: e.target.value })}
+              placeholder="Produto"
+              className="h-9"
+            />
+            <Input
+              value={productDraft.brand}
+              onChange={(e) => onDraftChange({ brand: e.target.value })}
+              placeholder="Marca"
+              className="h-9"
+            />
+            <Input
+              inputMode="numeric"
+              value={productDraft.barcode}
+              onChange={(e) => onDraftChange({ barcode: e.target.value.replace(/\D/g, "") })}
+              placeholder="Codigo"
+              className="h-9"
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={savingDetailsId === p.id}
+              onClick={() => saveProductDetails(p)}
+            >
+              {savingDetailsId === p.id ? "..." : "Salvar"}
+            </Button>
           </div>
         </div>
       </div>
@@ -418,6 +577,15 @@ function ProductRow({
             <Trash2 className="h-4 w-4 text-destructive" />
           </Button>
         )}
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={deletingProductId === p.id}
+          onClick={() => deleteProduct(p)}
+        >
+          <Trash2 className="h-4 w-4 mr-1 text-destructive" />
+          <span className="text-destructive">{deletingProductId === p.id ? "..." : "Excluir"}</span>
+        </Button>
         <div className="min-w-24 text-left sm:text-right">
           <div className={`font-semibold ${qty <= 0 ? "text-muted-foreground" : ""}`}>
             {qty > 0 ? `${qty} un.` : "Sem estoque"}
