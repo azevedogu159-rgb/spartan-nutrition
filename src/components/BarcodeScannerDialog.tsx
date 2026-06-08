@@ -57,10 +57,28 @@ const formats = [
 
 export function BarcodeScannerDialog({ open, onOpenChange, onScan }: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const [status, setStatus] = useState("Aponte a camera para o codigo de barras.");
+  const [status, setStatus] = useState("Toque em iniciar para liberar a camera.");
+  const [isStarting, setIsStarting] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
+  const cleanupRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    if (!open) return;
+    if (open) {
+      setStatus("Toque em iniciar para liberar a camera.");
+      setIsStarting(false);
+      setIsScanning(false);
+      return;
+    }
+
+    cleanupRef.current?.();
+    cleanupRef.current = null;
+  }, [open]);
+
+  async function startScanner() {
+    cleanupRef.current?.();
+    cleanupRef.current = null;
+    setIsStarting(true);
+    setStatus("Solicitando acesso a camera...");
 
     let cancelled = false;
     let frame = 0;
@@ -84,75 +102,83 @@ export function BarcodeScannerDialog({ open, onOpenChange, onScan }: Props) {
       await video.play();
     }
 
-    async function start() {
-      if (!navigator.mediaDevices?.getUserMedia) {
-        setStatus("Este navegador nao permite acesso a camera. Digite o codigo manualmente.");
-        return;
-      }
-
-      try {
-        const video = videoRef.current;
-        if (!video || cancelled) return;
-
-        if (window.BarcodeDetector) {
-          await startCamera(video);
-
-          const detector = new window.BarcodeDetector({ formats });
-          const scan = async () => {
-            if (cancelled || !videoRef.current) return;
-            try {
-              const results = await detector.detect(videoRef.current);
-              const code = results[0]?.rawValue?.trim();
-              if (code) {
-                onScan(code);
-                onOpenChange(false);
-                return;
-              }
-            } catch {
-              setStatus("Nao consegui ler ainda. Ajuste a distancia e a luz.");
-            }
-            frame = requestAnimationFrame(scan);
-          };
-
-          setStatus("Aponte a camera para o codigo de barras.");
-          frame = requestAnimationFrame(scan);
-          return;
-        }
-
-        setStatus("Carregando leitor compativel com iPhone...");
-        const { BrowserMultiFormatReader } = (await import(
-          /* @vite-ignore */ "https://esm.sh/@zxing/browser@0.1.5?bundle"
-        )) as ZxingModule;
-        if (cancelled) return;
-
-        await startCamera(video);
-        if (cancelled) return;
-
-        const reader = new BrowserMultiFormatReader();
-        zxingControls =
-          (await reader.decodeFromVideoElement(video, (result, _error, controls) => {
-            const code = (result?.getText?.() ?? result?.text ?? "").trim();
-            if (!code) return;
-
-            controls?.stop?.();
-            onScan(code);
-            onOpenChange(false);
-          })) ?? undefined;
-        setStatus("Aponte a camera para o codigo de barras.");
-      } catch {
-        setStatus("Nao consegui iniciar o leitor. Permita a camera ou digite o codigo manualmente.");
-      }
-    }
-
-    start();
-
-    return () => {
+    const cleanup = () => {
       cancelled = true;
       cancelAnimationFrame(frame);
       zxingControls?.stop?.();
       stream?.getTracks().forEach((track) => track.stop());
+      setIsScanning(false);
+      setIsStarting(false);
     };
-  }, [onOpenChange, onScan, open]);
+
+    cleanupRef.current = cleanup;
+
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setStatus("Este navegador nao permite acesso a camera. Digite o codigo manualmente.");
+        setIsStarting(false);
+        return;
+      }
+
+      const video = videoRef.current;
+      if (!video || cancelled) return;
+
+      if (window.BarcodeDetector) {
+        await startCamera(video);
+        setIsScanning(true);
+
+        const detector = new window.BarcodeDetector({ formats });
+        const scan = async () => {
+          if (cancelled || !videoRef.current) return;
+          try {
+            const results = await detector.detect(videoRef.current);
+            const code = results[0]?.rawValue?.trim();
+            if (code) {
+              cleanup();
+              onScan(code);
+              onOpenChange(false);
+              return;
+            }
+          } catch {
+            setStatus("Nao consegui ler ainda. Ajuste a distancia e a luz.");
+          }
+          frame = requestAnimationFrame(scan);
+        };
+
+        setStatus("Aponte a camera para o codigo de barras.");
+        setIsStarting(false);
+        frame = requestAnimationFrame(scan);
+        return;
+      }
+
+      setStatus("Carregando leitor compativel com iPhone...");
+      const { BrowserMultiFormatReader } = (await import(
+        /* @vite-ignore */ "https://esm.sh/@zxing/browser@0.1.5?bundle"
+      )) as ZxingModule;
+      if (cancelled) return;
+
+      await startCamera(video);
+      if (cancelled) return;
+      setIsScanning(true);
+
+      const reader = new BrowserMultiFormatReader();
+      zxingControls =
+        (await reader.decodeFromVideoElement(video, (result, _error, controls) => {
+          const code = (result?.getText?.() ?? result?.text ?? "").trim();
+          if (!code) return;
+
+          controls?.stop?.();
+          cleanup();
+          onScan(code);
+          onOpenChange(false);
+        })) ?? undefined;
+      setStatus("Aponte a camera para o codigo de barras.");
+      setIsStarting(false);
+    } catch {
+      cleanup();
+      setStatus("Nao consegui iniciar o leitor. Permita a camera ou digite o codigo manualmente.");
+    }
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -171,6 +197,11 @@ export function BarcodeScannerDialog({ open, onOpenChange, onScan }: Props) {
             className="aspect-[4/3] w-full rounded-md bg-black object-cover"
           />
           <p className="text-sm text-muted-foreground">{status}</p>
+          {!isScanning && (
+            <Button type="button" className="w-full" onClick={startScanner} disabled={isStarting}>
+              {isStarting ? "Abrindo camera..." : "Iniciar camera"}
+            </Button>
+          )}
           <Button type="button" variant="outline" className="w-full" onClick={() => onOpenChange(false)}>
             Fechar
           </Button>
