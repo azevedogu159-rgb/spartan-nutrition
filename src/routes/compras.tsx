@@ -84,6 +84,7 @@ function ComprasPage() {
       for (const it of valid) {
         const cleanName = it.name.trim();
         const barcode = normalizeBarcode(it.barcode);
+        const suggestedPrice = Number(it.suggested) || 0;
         const productQuery = supabase.from("products").select("id");
         const { data: existing } = barcode
           ? await productQuery.eq("barcode", barcode).maybeSingle()
@@ -91,13 +92,29 @@ function ComprasPage() {
         let productId = existing?.id;
         if (!productId) {
           const { data: created, error: cErr } = await supabase
-            .from("products").insert({ name: cleanName, brand: it.brand.trim() || null, barcode: barcode || null }).select("id").single();
+            .from("products")
+            .insert({
+              name: cleanName,
+              brand: it.brand.trim() || null,
+              barcode: barcode || null,
+              suggested_price_brl: suggestedPrice,
+            })
+            .select("id")
+            .single();
           if (cErr) throw cErr;
           productId = created.id;
-        } else if (it.brand.trim() || barcode) {
+        } else if (it.brand.trim() || barcode || suggestedPrice > 0) {
+          const productUpdate: {
+            brand?: string | null;
+            barcode?: string | null;
+            suggested_price_brl?: number;
+          } = {};
+          if (it.brand.trim()) productUpdate.brand = it.brand.trim();
+          if (barcode) productUpdate.barcode = barcode;
+          if (suggestedPrice > 0) productUpdate.suggested_price_brl = suggestedPrice;
           await supabase
             .from("products")
-            .update({ brand: it.brand.trim() || null, barcode: barcode || null })
+            .update(productUpdate)
             .eq("id", productId);
         }
         const q = Number(it.qty), unitBrl = Number(it.cost);
@@ -113,7 +130,7 @@ function ComprasPage() {
           unit_brl: unitBrl,
           total_brl: unitBrl * q,
           expires_at: it.expiresAt,
-          suggested_price_brl: Number(it.suggested) || 0,
+          suggested_price_brl: suggestedPrice,
           remaining_qty: q,
         });
         if (iErr) throw iErr;

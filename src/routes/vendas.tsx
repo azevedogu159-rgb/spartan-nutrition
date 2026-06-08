@@ -48,6 +48,8 @@ function VendasPage() {
   const savingRef = useRef(false);
 
   const selected = products.find((p) => p.id === productId);
+  const suggestedPrice = selected ? Number(selected.suggested_price_brl) || 0 : 0;
+  const pricePlaceholder = suggestedPrice > 0 ? `Sugestao: ${brl(suggestedPrice)}` : "0,00";
   const q = Number(qty) || 0, pr = Number(price) || 0;
   const cost = selected ? Number(selected.avg_cost_brl) * q : 0;
   const revenue = pr * q;
@@ -231,7 +233,7 @@ function VendasPage() {
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">Preço de venda unitário (R$) *</Label>
-              <Input type="number" step="0.01" min="0" value={price} onChange={(e) => setPrice(e.target.value)} />
+              <Input type="number" step="0.01" min="0" value={price} onChange={(e) => setPrice(e.target.value)} placeholder={pricePlaceholder} />
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">Data</Label>
