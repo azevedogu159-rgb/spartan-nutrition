@@ -34,6 +34,16 @@ type Item = {
   remaining_qty: number;
 };
 
+type HistoryGroup = {
+  id: string;
+  orderIds: string[];
+  supplier: string | null;
+  total_brl: number;
+  payment_method: string | null;
+  notes: string | null;
+  purchase_date: string;
+};
+
 function HistoricoPage() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [items, setItems] = useState<Item[]>([]);
@@ -56,26 +66,71 @@ function HistoricoPage() {
     return m;
   }, [items]);
 
+  const groupedOrders = useMemo(() => {
+    const groups = new Map<string, HistoryGroup>();
+
+    for (const order of orders) {
+      const supplierKey = normalizeSupplier(order.supplier);
+      const key = `${order.purchase_date}::${supplierKey}`;
+      const group = groups.get(key);
+
+      if (group) {
+        group.orderIds.push(order.id);
+        group.total_brl += Number(order.total_brl) || 0;
+        group.supplier = preferredSupplier(group.supplier, order.supplier);
+        group.payment_method = mergeText(group.payment_method, order.payment_method);
+        group.notes = mergeText(group.notes, order.notes);
+      } else {
+        groups.set(key, {
+          id: key,
+          orderIds: [order.id],
+          supplier: order.supplier,
+          total_brl: Number(order.total_brl) || 0,
+          payment_method: order.payment_method,
+          notes: order.notes,
+          purchase_date: order.purchase_date,
+        });
+      }
+    }
+
+    return Array.from(groups.values()).sort((a, b) => {
+      const byDate = b.purchase_date.localeCompare(a.purchase_date);
+      if (byDate !== 0) return byDate;
+      return (a.supplier ?? "").localeCompare(b.supplier ?? "");
+    });
+  }, [orders]);
+
+  const itemsByGroup = useMemo(() => {
+    const m: Record<string, Item[]> = {};
+    for (const group of groupedOrders) {
+      m[group.id] = group.orderIds.flatMap((orderId) => itemsByOrder[orderId] ?? []);
+    }
+    return m;
+  }, [groupedOrders, itemsByOrder]);
+
   const filtered = useMemo(() => {
     const term = q.trim().toLowerCase();
-    if (!term) return orders;
-    return orders.filter((o) => {
+    if (!term) return groupedOrders;
+    return groupedOrders.filter((o) => {
       if ((o.supplier ?? "").toLowerCase().includes(term)) return true;
-      if (o.id.toLowerCase().includes(term)) return true;
+      if (o.orderIds.some((id) => id.toLowerCase().includes(term))) return true;
       if (o.purchase_date.includes(term)) return true;
-      const its = itemsByOrder[o.id] ?? [];
+      const its = itemsByGroup[o.id] ?? [];
       return its.some((it) =>
         it.perfume_name.toLowerCase().includes(term) ||
         (it.brand ?? "").toLowerCase().includes(term)
       );
     });
-  }, [orders, q, itemsByOrder]);
+  }, [groupedOrders, q, itemsByGroup]);
 
-  const removeOrder = async (id: string) => {
-    if (!confirm("Excluir esta compra inteira? Os itens serao revertidos do estoque.")) return;
-    const { error } = await supabase.from("purchase_orders").delete().eq("id", id);
+  const removeOrders = async (group: HistoryGroup) => {
+    const message = group.orderIds.length > 1
+      ? "Excluir todas as compras deste fornecedor nesta data? Os itens serao revertidos do estoque."
+      : "Excluir esta compra inteira? Os itens serao revertidos do estoque.";
+    if (!confirm(message)) return;
+    const { error } = await supabase.from("purchase_orders").delete().in("id", group.orderIds);
     if (error) return toast.error(error.message);
-    toast.success("Compra excluida.");
+    toast.success(group.orderIds.length > 1 ? "Compras excluidas." : "Compra excluida.");
     load();
   };
 
@@ -95,7 +150,7 @@ function HistoricoPage() {
           ) : (
             <ul className="space-y-3">
               {filtered.map((o) => {
-                const its = itemsByOrder[o.id] ?? [];
+                const its = itemsByGroup[o.id] ?? [];
                 const totalQty = its.reduce((a, x) => a + Number(x.quantity), 0);
                 const remaining = its.reduce((a, x) => a + Number(x.remaining_qty), 0);
                 const sold = totalQty - remaining;
@@ -109,13 +164,15 @@ function HistoricoPage() {
                     >
                       <div className="min-w-0 flex-1">
                         <div className="font-medium">
-                          {new Date(o.purchase_date).toLocaleDateString("pt-BR")}
+                          {formatDate(o.purchase_date)}
                           {o.supplier && ` - ${o.supplier}`}
                         </div>
                         <div className="text-xs text-muted-foreground">
                           {its.length} produtos - {totalQty} un.
                         </div>
-                        <div className="text-[11px] text-muted-foreground mt-0.5">ID: {o.id.slice(0, 8)}</div>
+                        <div className="text-[11px] text-muted-foreground mt-0.5">
+                          ID: {o.orderIds.map((id) => id.slice(0, 8)).join(", ")}
+                        </div>
                       </div>
                       <div className="text-right">
                         <div className="font-semibold text-primary">{brl(Number(o.total_brl))}</div>
@@ -156,9 +213,11 @@ function HistoricoPage() {
                         )}
 
                         <div className="flex justify-end">
-                          <Button variant="ghost" size="sm" onClick={() => removeOrder(o.id)}>
+                          <Button variant="ghost" size="sm" onClick={() => removeOrders(o)}>
                             <Trash2 className="h-4 w-4 mr-1 text-destructive" />
-                            <span className="text-destructive">Excluir compra</span>
+                            <span className="text-destructive">
+                              {o.orderIds.length > 1 ? "Excluir compras" : "Excluir compra"}
+                            </span>
                           </Button>
                         </div>
                       </div>
@@ -185,4 +244,24 @@ function Stat({ label, value, accent }: { label: string; value: string; accent?:
 
 function formatDate(value: string) {
   return new Date(`${value}T00:00:00`).toLocaleDateString("pt-BR");
+}
+
+function normalizeSupplier(value: string | null) {
+  return (value?.trim() || "sem fornecedor").toLowerCase();
+}
+
+function preferredSupplier(current: string | null, next: string | null) {
+  const currentTrimmed = current?.trim();
+  const nextTrimmed = next?.trim();
+  if (!currentTrimmed) return nextTrimmed || null;
+  if (!nextTrimmed) return currentTrimmed;
+  if (currentTrimmed === currentTrimmed.toUpperCase()) return currentTrimmed;
+  if (nextTrimmed === nextTrimmed.toUpperCase()) return nextTrimmed;
+  return currentTrimmed;
+}
+
+function mergeText(current: string | null, next: string | null) {
+  const values = [current, next].map((value) => value?.trim()).filter(Boolean) as string[];
+  const unique = Array.from(new Set(values));
+  return unique.length > 0 ? unique.join(" / ") : null;
 }
